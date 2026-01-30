@@ -1,0 +1,17 @@
+{
+  "name": "mariua-login-service",
+  "version": "1.0.0",
+  "description": "Serviço de login automatizado para Mariua usando Puppeteer",
+  "main": "mariua-login-service.js",
+  "scripts": {
+    "start": "node mariua-login-service.js",
+    "dev": "nodemon mariua-login-service.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "puppeteer": "^22.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
