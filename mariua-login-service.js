@@ -7,40 +7,117 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok' });
+  res.json({ status: 'ok', service: 'mariua-optimized' });
 });
 
-// ENDPOINT 1: Login rápido
+// ENDPOINT UNICO: Login
 app.post('/login', async (req, res) => {
   const { usuario, senha } = req.body;
   
+  if (!usuario || !senha) {
+    return res.status(400).json({ 
+      success: false, 
+      error: 'Campos usuario e senha obrigatórios' 
+    });
+  }
+  
   let browser;
   try {
+    console.log('[LOGIN] Iniciando...');
+    
     browser = await puppeteer.launch({
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--single-process'
+      ],
+      timeout: 60000
     });
     
     const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     
-    await page.goto('https://mariua.gpm.srv.br/', { waitUntil: 'networkidle2' });
-    await new Promise(r => setTimeout(r, 2000));
+    // Configurar timeouts maiores
+    page.setDefaultTimeout(30000);
+    page.setDefaultNavigationTimeout(30000);
     
-    await page.type('input[type="text"]', usuario);
-    await page.type('input[type="password"]', senha);
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1366, height: 768 });
     
+    console.log('[LOGIN] Acessando site...');
+    await page.goto('https://mariua.gpm.srv.br/', { 
+      waitUntil: 'domcontentloaded',
+      timeout: 25000
+    });
+    
+    // Aguardar campos aparecerem
+    await page.waitForSelector('input[type="text"], input[type="password"]', { timeout: 10000 });
+    
+    console.log('[LOGIN] Preenchendo credenciais...');
+    
+    // Preencher usuário
+    const usuarioInput = await page.$('input[type="text"]');
+    if (usuarioInput) {
+      await usuarioInput.click();
+      await usuarioInput.type(usuario, { delay: 50 });
+    }
+    
+    // Preencher senha
+    const senhaInput = await page.$('input[type="password"]');
+    if (senhaInput) {
+      await senhaInput.click();
+      await senhaInput.type(senha, { delay: 50 });
+    }
+    
+    console.log('[LOGIN] Fazendo login...');
+    
+    // Clicar no botão de submit
     await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2' }),
-      page.click('input[type="submit"]')
+      page.waitForNavigation({ 
+        waitUntil: 'domcontentloaded',
+        timeout: 25000
+      }),
+      page.click('input[type="submit"], button[type="submit"]')
     ]);
     
+    // Aguardar página carregar
+    await page.waitForTimeout(1000);
+    
+    const currentUrl = page.url();
+    console.log('[LOGIN] URL após login:', currentUrl);
+    
+    // Verificar se login foi bem-sucedido
+    const isLoginSuccess = !currentUrl.includes('index.php') || 
+                          currentUrl.includes('/ci/') ||
+                          currentUrl.includes('principal') ||
+                          currentUrl.includes('home');
+    
+    if (!isLoginSuccess) {
+      await browser.close();
+      return res.json({
+        success: false,
+        error: 'LOGIN_FAILED',
+        message: 'Credenciais incorretas ou erro no login'
+      });
+    }
+    
+    // Extrair cookies
     const cookies = await page.cookies();
     const cookieObj = {};
-    cookies.forEach(c => { cookieObj[c.name] = c.value; });
-    const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    cookies.forEach(cookie => {
+      cookieObj[cookie.name] = cookie.value;
+    });
+    
+    const cookieString = cookies
+      .map(cookie => `${cookie.name}=${cookie.value}`)
+      .join('; ');
     
     await browser.close();
+    
+    console.log('[LOGIN] ✅ Sucesso! PHPSESSID:', cookieObj.PHPSESSID);
     
     res.json({
       success: true,
@@ -48,175 +125,26 @@ app.post('/login', async (req, res) => {
       cookies: cookieObj,
       cookieString: cookieString,
       PHPSESSID: cookieObj.PHPSESSID,
+      homeUrl: currentUrl,
       timestamp: new Date().toISOString()
     });
     
   } catch (error) {
-    if (browser) await browser.close();
-    res.status(500).json({ success: false, error: 'INTERNAL_ERROR', message: error.message });
-  }
-});
-
-// ENDPOINT 2: Download completo
-app.post('/download-fotos', async (req, res) => {
-  const { usuario, senha, diasAtras = 5 } = req.body;
-  
-  let browser;
-  try {
-    console.log('[1/7] Iniciando navegador...');
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
+    console.error('[LOGIN] ❌ Erro:', error.message);
     
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
-    await page.setViewport({ width: 1920, height: 1080 });
-    
-    // LOGIN
-    console.log('[2/7] Fazendo login...');
-    await page.goto('https://mariua.gpm.srv.br/', { waitUntil: 'networkidle2' });
-    await new Promise(r => setTimeout(r, 2000));
-    
-    await page.type('input[type="text"]', usuario, { delay: 50 });
-    await page.type('input[type="password"]', senha, { delay: 50 });
-    
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'networkidle2' }),
-      page.click('input[type="submit"]')
-    ]);
-    console.log('[2/7] ✓ Login OK');
-    
-    // NAVEGAR PARA CONSULTA FOTO
-    console.log('[3/7] Acessando ConsultaFoto...');
-    await page.goto('https://mariua.gpm.srv.br/ci/Servico/ConsultaFoto', { 
-      waitUntil: 'networkidle2',
-      timeout: 30000
-    });
-    await new Promise(r => setTimeout(r, 3000));
-    console.log('[3/7] ✓ Página carregada');
-    
-    // PREENCHER DATAS
-    console.log('[4/7] Preenchendo formulário...');
-    const hoje = new Date();
-    const dataFim = `${String(hoje.getDate()).padStart(2,'0')}/${String(hoje.getMonth()+1).padStart(2,'0')}/${hoje.getFullYear()}`;
-    const inicioDate = new Date();
-    inicioDate.setDate(hoje.getDate() - diasAtras);
-    const dataInicio = `${String(inicioDate.getDate()).padStart(2,'0')}/${String(inicioDate.getMonth()+1).padStart(2,'0')}/${inicioDate.getFullYear()}`;
-    
-    console.log('  Período:', dataInicio, 'a', dataFim);
-    
-    // Preencher campos via JavaScript
-    await page.evaluate((di, df) => {
-      const inputs = document.querySelectorAll('input');
-      inputs.forEach(inp => {
-        const name = inp.name || inp.id || '';
-        if (name.toLowerCase().includes('inicio') || name.toLowerCase().includes('start')) {
-          inp.value = di;
-          inp.dispatchEvent(new Event('input', { bubbles: true }));
-          inp.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        if (name.toLowerCase().includes('fim') || name.toLowerCase().includes('end')) {
-          inp.value = df;
-          inp.dispatchEvent(new Event('input', { bubbles: true }));
-          inp.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      });
-    }, dataInicio, dataFim);
-    
-    await new Promise(r => setTimeout(r, 1000));
-    console.log('[4/7] ✓ Datas preenchidas');
-    
-    // CLICAR PESQUISAR
-    console.log('[5/7] Pesquisando...');
-    await page.evaluate(() => {
-      const buttons = document.querySelectorAll('button, input[type="submit"]');
-      for (const btn of buttons) {
-        const text = (btn.textContent || btn.value || '').toLowerCase();
-        if (text.includes('pesquisar') || text.includes('buscar')) {
-          btn.click();
-          break;
-        }
-      }
-    });
-    
-    // Aguardar resultados
-    await new Promise(r => setTimeout(r, 8000));
-    console.log('[5/7] ✓ Resultados carregados');
-    
-    // SELECIONAR TODOS
-    console.log('[6/7] Selecionando todos...');
-    try {
-      await page.waitForSelector('#selecionarCheckbox', { timeout: 15000 });
-      await page.click('#selecionarCheckbox');
-      await new Promise(r => setTimeout(r, 2000));
-      console.log('[6/7] ✓ Todos selecionados');
-    } catch (e) {
-      console.log('[6/7] ! Botão não encontrado, tentando alternativa...');
-      await page.evaluate(() => {
-        const btns = document.querySelectorAll('button');
-        for (const btn of btns) {
-          if (btn.textContent.includes('Marcar') || btn.textContent.includes('Selecionar')) {
-            btn.click();
-            break;
-          }
-        }
-      });
-      await new Promise(r => setTimeout(r, 2000));
+    if (browser) {
+      await browser.close();
     }
     
-    // BAIXAR
-    console.log('[7/7] Processando download...');
-    try {
-      await page.waitForSelector('#btn-baixar-marcados', { timeout: 10000 });
-      await page.click('#btn-baixar-marcados');
-    } catch (e) {
-      // Executar função direta
-      await page.evaluate(() => {
-        if (typeof processarFotos === 'function') {
-          processarFotos();
-        }
-      });
-    }
-    
-    await new Promise(r => setTimeout(r, 10000));
-    
-    // EXTRAIR ZIP
-    const content = await page.content();
-    const zipMatch = content.match(/downloadZip\/([^'"<>\s]+\.zip)/i) || 
-                     content.match(/([a-zA-Z0-9_\-]+\.zip)/i);
-    
-    if (!zipMatch) {
-      console.error('HTML Preview:', content.substring(0, 1000));
-      throw new Error('ZIP não encontrado após processar');
-    }
-    
-    const zipFilename = zipMatch[1];
-    const downloadUrl = `https://mariua.gpm.srv.br/ci/Servico/ConsultaFoto/downloadZip/${zipFilename}`;
-    
-    const cookies = await page.cookies();
-    const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-    
-    await browser.close();
-    
-    console.log('[7/7] ✅ Concluído! ZIP:', zipFilename);
-    
-    res.json({
-      success: true,
-      zipFilename,
-      downloadUrl,
-      cookieString,
-      dataInicio,
-      dataFim
+    res.status(500).json({
+      success: false,
+      error: 'INTERNAL_ERROR',
+      message: error.message
     });
-    
-  } catch (error) {
-    console.error('Erro:', error.message);
-    if (browser) await browser.close();
-    res.status(500).json({ success: false, error: 'INTERNAL_ERROR', message: error.message });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Serviço na porta ${PORT}`);
+  console.log(`🚀 Serviço Mariua otimizado na porta ${PORT}`);
+  console.log(`   POST /login - Login com Puppeteer otimizado`);
 });
