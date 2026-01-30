@@ -7,117 +7,58 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'mariua-optimized' });
+  res.json({ status: 'ok' });
 });
 
-// ENDPOINT UNICO: Login
 app.post('/login', async (req, res) => {
   const { usuario, senha } = req.body;
   
   if (!usuario || !senha) {
-    return res.status(400).json({ 
-      success: false, 
-      error: 'Campos usuario e senha obrigatórios' 
-    });
+    return res.status(400).json({ success: false, error: 'Campos obrigatórios' });
   }
   
   let browser;
   try {
-    console.log('[LOGIN] Iniciando...');
+    console.log('Iniciando browser...');
     
     browser = await puppeteer.launch({
       headless: true,
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--single-process'
-      ],
-      timeout: 60000
+        '--disable-dev-shm-usage'
+      ]
     });
     
     const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
     
-    // Configurar timeouts maiores
-    page.setDefaultTimeout(30000);
-    page.setDefaultNavigationTimeout(30000);
-    
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1366, height: 768 });
-    
-    console.log('[LOGIN] Acessando site...');
+    console.log('Acessando site...');
     await page.goto('https://mariua.gpm.srv.br/', { 
-      waitUntil: 'domcontentloaded',
-      timeout: 25000
+      waitUntil: 'networkidle2',
+      timeout: 30000
     });
     
-    // Aguardar campos aparecerem
-    await page.waitForSelector('input[type="text"], input[type="password"]', { timeout: 10000 });
+    await page.waitForSelector('input[type="password"]', { timeout: 10000 });
     
-    console.log('[LOGIN] Preenchendo credenciais...');
+    console.log('Preenchendo...');
+    await page.type('input[type="text"]', usuario);
+    await page.type('input[type="password"]', senha);
     
-    // Preencher usuário
-    const usuarioInput = await page.$('input[type="text"]');
-    if (usuarioInput) {
-      await usuarioInput.click();
-      await usuarioInput.type(usuario, { delay: 50 });
-    }
-    
-    // Preencher senha
-    const senhaInput = await page.$('input[type="password"]');
-    if (senhaInput) {
-      await senhaInput.click();
-      await senhaInput.type(senha, { delay: 50 });
-    }
-    
-    console.log('[LOGIN] Fazendo login...');
-    
-    // Clicar no botão de submit
+    console.log('Enviando...');
     await Promise.all([
-      page.waitForNavigation({ 
-        waitUntil: 'domcontentloaded',
-        timeout: 25000
-      }),
-      page.click('input[type="submit"], button[type="submit"]')
+      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }),
+      page.click('input[type="submit"]')
     ]);
     
-    // Aguardar página carregar
-    await page.waitForTimeout(1000);
-    
-    const currentUrl = page.url();
-    console.log('[LOGIN] URL após login:', currentUrl);
-    
-    // Verificar se login foi bem-sucedido
-    const isLoginSuccess = !currentUrl.includes('index.php') || 
-                          currentUrl.includes('/ci/') ||
-                          currentUrl.includes('principal') ||
-                          currentUrl.includes('home');
-    
-    if (!isLoginSuccess) {
-      await browser.close();
-      return res.json({
-        success: false,
-        error: 'LOGIN_FAILED',
-        message: 'Credenciais incorretas ou erro no login'
-      });
-    }
-    
-    // Extrair cookies
     const cookies = await page.cookies();
     const cookieObj = {};
-    cookies.forEach(cookie => {
-      cookieObj[cookie.name] = cookie.value;
-    });
-    
-    const cookieString = cookies
-      .map(cookie => `${cookie.name}=${cookie.value}`)
-      .join('; ');
+    cookies.forEach(c => { cookieObj[c.name] = c.value; });
+    const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
     
     await browser.close();
     
-    console.log('[LOGIN] ✅ Sucesso! PHPSESSID:', cookieObj.PHPSESSID);
+    console.log('✅ Login OK');
     
     res.json({
       success: true,
@@ -125,26 +66,15 @@ app.post('/login', async (req, res) => {
       cookies: cookieObj,
       cookieString: cookieString,
       PHPSESSID: cookieObj.PHPSESSID,
-      homeUrl: currentUrl,
+      homeUrl: page.url(),
       timestamp: new Date().toISOString()
     });
     
   } catch (error) {
-    console.error('[LOGIN] ❌ Erro:', error.message);
-    
-    if (browser) {
-      await browser.close();
-    }
-    
-    res.status(500).json({
-      success: false,
-      error: 'INTERNAL_ERROR',
-      message: error.message
-    });
+    console.error('Erro:', error.message);
+    if (browser) await browser.close();
+    res.status(500).json({ success: false, error: 'INTERNAL_ERROR', message: error.message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Serviço Mariua otimizado na porta ${PORT}`);
-  console.log(`   POST /login - Login com Puppeteer otimizado`);
-});
+app.listen(PORT, () => console.log(`Porta ${PORT}`));
