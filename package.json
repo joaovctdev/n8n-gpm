@@ -8,8 +8,8 @@
     "dev": "nodemon mariua-login-service.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "puppeteer": "^22.0.0"
+    "express": "^4.22.1",
+    "puppeteer": "^22.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"
